@@ -1,0 +1,30 @@
+{
+  "name": "pocketbase-mcp-pro",
+  "version": "1.0.0",
+  "description": "Installer for PocketBase MCP Pro — one command setup for AI-powered PocketBase management",
+  "type": "module",
+  "bin": {
+    "pocketbase-mcp-pro": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "pocketbase",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "claude",
+    "cursor",
+    "installer"
+  ],
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Velocity-Softworks/pocketbase-mcp-pro-installer.git"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
