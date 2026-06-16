@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "description": "Installer for PocketBase MCP Pro — one command setup for AI-powered PocketBase management",
   "type": "module",
-  "bin": {
-    "pocketbase-mcp-pro": "./index.js"
-  },
+  "bin": "./index.js",
+
   "files": [
     "index.js",
     "README.md"
