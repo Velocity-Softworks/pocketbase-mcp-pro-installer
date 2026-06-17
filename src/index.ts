@@ -156,8 +156,8 @@ function printConfig(packageDir: string): void {
         args: [entrypoint],
         env: {
           POCKETBASE_URL: 'http://127.0.0.1:8090',
-          // POCKETBASE_SUPERUSER_EMAIL: 'admin@example.com',
-          // POCKETBASE_SUPERUSER_PASSWORD: 'your-password',
+          // POCKETBASE_ADMIN_EMAIL: 'admin@example.com',
+          // POCKETBASE_ADMIN_PASSWORD: 'your-password',
         },
       },
     },
