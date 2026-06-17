@@ -18,9 +18,7 @@ const GITHUB_OWNER = 'Velocity-Softworks';
 const GITHUB_REPO  = 'pocketbase-mcp-pro';
 const INSTALL_DIR  = join(homedir(), '.pocketbase-mcp-pro');
 const LICENSE_FILE = join(INSTALL_DIR, '.license');
-
-// ponytail: license validation is a stub — real Vercel/Supabase endpoint added later
-const LICENSE_API  = 'https://api.pocketbase-mcp-pro.com/v1/activate'; // not live yet
+const LICENSE_API  = 'https://pocketbase-mcp-pro-api.vercel.app/api/activate';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +42,32 @@ function httpsGet(url, binary = false) {
       res.on('end', () => resolve(binary ? Buffer.concat(chunks) : Buffer.concat(chunks).toString()));
       res.on('error', reject);
     }).on('error', reject);
+  });
+}
+
+/** POST JSON to a URL, return parsed response body */
+function httpsPost(url, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const opts = Object.assign(new URL(url), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+        'User-Agent': 'pocketbase-mcp-pro-installer',
+      },
+    });
+    const req = https.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+        catch { reject(new Error('Invalid JSON response from API')); }
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
   });
 }
 
@@ -72,46 +96,21 @@ function exec(cmd, args, cwd) {
   });
 }
 
-/** Fetch latest GitHub release info */
-async function getLatestRelease() {
-  const json = await httpsGet(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
-  );
-  const release = JSON.parse(json);
-  if (!release.tag_name) throw new Error('No releases found on GitHub.');
-  const asset = release.assets.find((a) => a.name.endsWith('.tgz'));
-  if (!asset) throw new Error(`No .tgz asset in release ${release.tag_name}.`);
-  return { version: release.tag_name, downloadUrl: asset.browser_download_url };
-}
-
 // ─── License validation ───────────────────────────────────────────────────────
 
-/**
- * ponytail: stub — always returns valid for now.
- * Replace body with real POST to LICENSE_API once Vercel endpoint is live.
- * Ceiling: no machine-locking, key can be shared. Upgrade path: add machineId to payload.
- */
+/** POST key to Vercel API → returns { valid, downloadUrl?, reason? } */
 async function validateLicense(key) {
-  // TODO: replace with real API call
-  // const body = JSON.stringify({ key, machineId: getMachineId() });
-  // const res  = await httpsPost(LICENSE_API, body);
-  // return { valid: res.valid, downloadUrl: res.downloadUrl };
-
-  if (!key || key.length < 8) return { valid: false, reason: 'Key too short.' };
-  return { valid: true }; // stub — accepts any key ≥ 8 chars
+  const res = await httpsPost(LICENSE_API, { key });
+  return res;
 }
 
 // ─── Install logic ────────────────────────────────────────────────────────────
 
-async function install(licenseKey) {
-  console.log('\n📡 Fetching latest release info from GitHub...');
-  const { version, downloadUrl } = await getLatestRelease();
-  console.log(`   Found: ${version}`);
-
+async function install(licenseKey, downloadUrl) {
   await mkdir(INSTALL_DIR, { recursive: true });
 
   const tarball = join(INSTALL_DIR, 'package.tgz');
-  console.log(`\n📦 Downloading ${version}...`);
+  console.log('\n📦 Downloading PocketBase MCP Pro...');
   await download(downloadUrl, tarball);
   console.log('   Download complete.');
 
@@ -201,15 +200,15 @@ async function main() {
   const key = await ask('🔑 Enter your license key: ');
   console.log('\n⏳ Validating license...');
 
-  const { valid, reason } = await validateLicense(key);
+  const { valid, reason, downloadUrl } = await validateLicense(key);
   if (!valid) {
-    console.error(`\n❌ Invalid license key: ${reason}`);
+    console.error(`\n❌ Invalid license key: ${reason ?? 'Unknown error'}`);
     console.error('   Purchase at: https://pocketbase-mcp-pro.com\n');
     process.exit(1);
   }
   console.log('   ✅ License accepted.');
 
-  const packageDir = await install(key);
+  const packageDir = await install(key, downloadUrl);
   printConfig(packageDir);
 
   process.exit(0);
