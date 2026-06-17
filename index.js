@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * PocketBase MCP Pro — Installer
- * Zero dependencies. Node 18+ stdlib only.
+ * Uses `tar` module for robust cross-platform extraction.
  */
 import { createInterface } from 'readline';
 import { mkdir, writeFile, readFile, rm } from 'fs/promises';
@@ -10,8 +10,7 @@ import { homedir, platform } from 'os';
 import { join, resolve } from 'path';
 import { createWriteStream } from 'fs';
 import https from 'https';
-import { spawn } from 'child_process';
-
+import * as tar from 'tar';
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const GITHUB_OWNER = 'Velocity-Softworks';
@@ -88,21 +87,7 @@ function download(url, dest) {
   });
 }
 
-/** Run a command, return exit code */
-function exec(cmd, args, cwd) {
-  return new Promise((resolve) => {
-    // ponytail: no shell:true — avoids DEP0190, args are controlled internally
-    const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
-    p.on('close', resolve);
-    p.on('error', () => {
-      // On Windows, try with .exe suffix if plain command fails
-      if (platform() === 'win32' && !cmd.endsWith('.exe')) {
-        const p2 = spawn(cmd + '.exe', args, { cwd, stdio: 'inherit' });
-        p2.on('close', resolve);
-      }
-    });
-  });
-}
+
 
 // ─── License validation ───────────────────────────────────────────────────────
 
@@ -127,10 +112,14 @@ async function install(licenseKey, downloadUrl) {
   if (existsSync(packageDir)) await rm(packageDir, { recursive: true });
 
   console.log('\n📂 Extracting...');
-  const tarCmd  = platform() === 'win32' ? 'tar' : 'tar';
-  const tarArgs = ['-xzf', tarball, '-C', INSTALL_DIR];
-  const code    = await exec(tarCmd, tarArgs, INSTALL_DIR);
-  if (code !== 0) throw new Error('Extraction failed. Is `tar` installed?');
+  try {
+    await tar.x({
+      file: tarball,
+      cwd: INSTALL_DIR,
+    });
+  } catch (err) {
+    throw new Error(`Extraction failed: ${err.message}`);
+  }
 
   // Clean up tarball
   await rm(tarball, { force: true });
