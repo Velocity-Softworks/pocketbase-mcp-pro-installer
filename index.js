@@ -91,8 +91,16 @@ function download(url, dest) {
 /** Run a command, return exit code */
 function exec(cmd, args, cwd) {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { cwd, stdio: 'inherit', shell: platform() === 'win32' });
+    // ponytail: no shell:true — avoids DEP0190, args are controlled internally
+    const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
     p.on('close', resolve);
+    p.on('error', () => {
+      // On Windows, try with .exe suffix if plain command fails
+      if (platform() === 'win32' && !cmd.endsWith('.exe')) {
+        const p2 = spawn(cmd + '.exe', args, { cwd, stdio: 'inherit' });
+        p2.on('close', resolve);
+      }
+    });
   });
 }
 
