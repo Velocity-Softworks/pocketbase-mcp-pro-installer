@@ -3,15 +3,15 @@
  * PocketBase MCP Pro — Installer
  * Uses `tar` module for robust cross-platform extraction.
  */
-import { createInterface } from 'readline';
-import { mkdir, writeFile, readFile, rm } from 'fs/promises';
-import { existsSync } from 'fs';
-import { homedir, platform } from 'os';
-import { join, resolve } from 'path';
-import { createWriteStream } from 'fs';
-import https from 'https';
+import { createInterface } from 'node:readline';
+import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { existsSync, createWriteStream } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join, resolve } from 'node:path';
+import https from 'node:https';
 import * as tar from 'tar';
-// ─── Config ──────────────────────────────────────────────────────────────────
+
+// ─── Config ───────────────────────────────────────────────────────────────────
 
 const GITHUB_OWNER = 'Velocity-Softworks';
 const GITHUB_REPO  = 'pocketbase-mcp-pro';
@@ -19,33 +19,48 @@ const INSTALL_DIR  = join(homedir(), '.pocketbase-mcp-pro');
 const LICENSE_FILE = join(INSTALL_DIR, '.license');
 const LICENSE_API  = 'https://pocketbase-mcp-pro-api.vercel.app/api/activate';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const ask = (() => {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return (q) => new Promise((res) => rl.question(q, (a) => res(a.trim())));
+  return (q: string): Promise<string> =>
+    new Promise((res) => rl.question(q, (a) => res(a.trim())));
 })();
 
 /** GET a URL, follow redirects, return body as string or Buffer */
-function httpsGet(url, binary = false) {
+function httpsGet(url: string, binary: true): Promise<Buffer>;
+function httpsGet(url: string, binary?: false): Promise<string>;
+function httpsGet(url: string, binary = false): Promise<string | Buffer> {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'pocketbase-mcp-pro-installer' } }, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        return httpsGet(res.headers.location, binary).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve(binary ? Buffer.concat(chunks) : Buffer.concat(chunks).toString()));
-      res.on('error', reject);
-    }).on('error', reject);
+    https
+      .get(url, { headers: { 'User-Agent': 'pocketbase-mcp-pro-installer' } }, (res) => {
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          return httpsGet(res.headers.location!, binary as false)
+            .then(resolve as (v: string) => void)
+            .catch(reject);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () =>
+          resolve(binary ? Buffer.concat(chunks) : Buffer.concat(chunks).toString()),
+        );
+        res.on('error', reject);
+      })
+      .on('error', reject);
   });
 }
 
+interface LicenseResponse {
+  valid: boolean;
+  downloadUrl?: string;
+  reason?: string;
+}
+
 /** POST JSON to a URL, return parsed response body */
-function httpsPost(url, body) {
+function httpsPost<T = unknown>(url: string, body: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
     const opts = Object.assign(new URL(url), {
@@ -57,11 +72,14 @@ function httpsPost(url, body) {
       },
     });
     const req = https.request(opts, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-        catch { reject(new Error('Invalid JSON response from API')); }
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString()) as T);
+        } catch {
+          reject(new Error('Invalid JSON response from API'));
+        }
       });
     });
     req.on('error', reject);
@@ -71,35 +89,36 @@ function httpsPost(url, body) {
 }
 
 /** Download URL to a local file path, following redirects */
-function download(url, dest) {
+function download(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const follow = (u) => {
-      https.get(u, { headers: { 'User-Agent': 'pocketbase-mcp-pro-installer' } }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) return follow(res.headers.location);
-        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
-        const out = createWriteStream(dest);
-        res.pipe(out);
-        out.on('finish', resolve);
-        out.on('error', reject);
-      }).on('error', reject);
+    const follow = (u: string) => {
+      https
+        .get(u, { headers: { 'User-Agent': 'pocketbase-mcp-pro-installer' } }, (res) => {
+          if (res.statusCode === 301 || res.statusCode === 302)
+            return follow(res.headers.location!);
+          if (res.statusCode !== 200)
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          const out = createWriteStream(dest);
+          res.pipe(out);
+          out.on('finish', resolve);
+          out.on('error', reject);
+        })
+        .on('error', reject);
     };
     follow(url);
   });
 }
 
-
-
 // ─── License validation ───────────────────────────────────────────────────────
 
 /** POST key to Vercel API → returns { valid, downloadUrl?, reason? } */
-async function validateLicense(key) {
-  const res = await httpsPost(LICENSE_API, { key });
-  return res;
+async function validateLicense(key: string): Promise<LicenseResponse> {
+  return httpsPost<LicenseResponse>(LICENSE_API, { key });
 }
 
 // ─── Install logic ────────────────────────────────────────────────────────────
 
-async function install(licenseKey, downloadUrl) {
+async function install(licenseKey: string, downloadUrl: string): Promise<string> {
   await mkdir(INSTALL_DIR, { recursive: true });
 
   const tarball = join(INSTALL_DIR, 'package.tgz');
@@ -113,12 +132,9 @@ async function install(licenseKey, downloadUrl) {
 
   console.log('\n📂 Extracting...');
   try {
-    await tar.x({
-      file: tarball,
-      cwd: INSTALL_DIR,
-    });
+    await tar.x({ file: tarball, cwd: INSTALL_DIR });
   } catch (err) {
-    throw new Error(`Extraction failed: ${err.message}`);
+    throw new Error(`Extraction failed: ${(err as Error).message}`);
   }
 
   // Clean up tarball
@@ -130,7 +146,7 @@ async function install(licenseKey, downloadUrl) {
   return packageDir;
 }
 
-function printConfig(packageDir) {
+function printConfig(packageDir: string): void {
   const entrypoint = resolve(packageDir, 'build', 'index.js');
 
   const config = {
@@ -147,7 +163,7 @@ function printConfig(packageDir) {
     },
   };
 
-  const isWin    = platform() === 'win32';
+  const isWin     = platform() === 'win32';
   const claudeCfg = isWin
     ? '%APPDATA%\\Claude\\claude_desktop_config.json'
     : '~/Library/Application Support/Claude/claude_desktop_config.json';
@@ -177,7 +193,7 @@ ${JSON.stringify(config, null, 2)}
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function main() {
+async function main(): Promise<void> {
   console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║       🚀 PocketBase MCP Pro — Installer                ║
@@ -186,8 +202,8 @@ async function main() {
 
   // Check for existing installation
   if (existsSync(LICENSE_FILE)) {
-    const existing = await readFile(LICENSE_FILE, 'utf8').catch(() => '');
-    const answer   = await ask('⚠️  An existing installation was found. Re-install? (y/N): ');
+    await readFile(LICENSE_FILE, 'utf8').catch(() => '');
+    const answer = await ask('⚠️  An existing installation was found. Re-install? (y/N): ');
     if (answer.toLowerCase() !== 'y') {
       console.log('\nAborted. Your existing installation is unchanged.\n');
       process.exit(0);
@@ -205,13 +221,13 @@ async function main() {
   }
   console.log('   ✅ License accepted.');
 
-  const packageDir = await install(key, downloadUrl);
+  const packageDir = await install(key, downloadUrl!);
   printConfig(packageDir);
 
   process.exit(0);
 }
 
-main().catch((err) => {
+main().catch((err: Error) => {
   console.error(`\n❌ Installation failed: ${err.message}\n`);
   process.exit(1);
 });

@@ -1,15 +1,20 @@
 {
   "name": "pocketbase-mcp-pro",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Installer for PocketBase MCP Pro — one command setup for AI-powered PocketBase management",
   "type": "module",
   "bin": {
-    "pocketbase-mcp-pro": "index.js"
+    "pocketbase-mcp-pro": "dist/index.js"
   },
   "files": [
-    "index.js",
+    "dist",
     "README.md"
   ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
   "keywords": [
     "pocketbase",
     "mcp",
@@ -29,5 +34,10 @@
   },
   "dependencies": {
     "tar": "^7.5.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/tar": "^6.1.13",
+    "typescript": "^5.7.0"
   }
 }
