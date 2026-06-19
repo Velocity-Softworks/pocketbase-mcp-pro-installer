@@ -18,6 +18,35 @@ const GITHUB_REPO  = 'pocketbase-mcp-pro';
 const INSTALL_DIR  = join(homedir(), '.pocketbase-mcp-pro');
 const LICENSE_FILE = join(INSTALL_DIR, '.license');
 const LICENSE_API  = 'https://pocketbase-mcp-pro-api.vercel.app/api/activate';
+const VERSIONS_API = 'https://pocketbase-mcp-pro-api.vercel.app/api/versions';
+
+// ─── CLI args ─────────────────────────────────────────────────────────────────
+
+interface Args {
+  help: boolean;
+  listVersions: boolean;
+  version: string | null; // e.g. "v1.2.3" or null → latest
+}
+
+function parseArgs(): Args {
+  const argv = process.argv.slice(2);
+  const args: Args = { help: false, listVersions: false, version: null };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') { args.help = true; }
+    else if (a === '--list-versions')  { args.listVersions = true; }
+    else if (a === '--version') {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('-')) {
+        console.error('❌ --version requires a version tag, e.g. --version v1.2.3');
+        process.exit(1);
+      }
+      args.version = v;
+      i++; // skip next token
+    }
+  }
+  return args;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -109,11 +138,63 @@ function download(url: string, dest: string): Promise<void> {
   });
 }
 
+// ─── Commands ─────────────────────────────────────────────────────────────────
+
+function printHelp(): void {
+  console.log(`
+╔════════════════════════════════════════════════════════╗
+║       🚀 PocketBase MCP Pro — Installer                ║
+╚════════════════════════════════════════════════════════╝
+
+Usage:
+  npx pocketbase-mcp-pro                        Install latest version
+  npx pocketbase-mcp-pro --version <tag>        Install a specific version
+  npx pocketbase-mcp-pro --list-versions        List all available versions
+  npx pocketbase-mcp-pro --help                 Show this help message
+
+Examples:
+  npx pocketbase-mcp-pro
+  npx pocketbase-mcp-pro --version v1.1.0
+  npx pocketbase-mcp-pro --list-versions
+
+Docs: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}#readme
+`);
+}
+
+async function listVersions(): Promise<void> {
+  console.log(`
+╔════════════════════════════════════════════════════════╗
+║     📋 PocketBase MCP Pro — Available Versions         ║
+╚════════════════════════════════════════════════════════╝
+`);
+
+  console.log('⏳ Fetching versions...\n');
+  const raw = await httpsGet(VERSIONS_API);
+  const { versions } = JSON.parse(raw) as { versions: string[] };
+
+  if (!versions.length) {
+    console.log('  No versioned releases found yet.\n');
+  } else {
+    versions.forEach((v, i) => {
+      const tag = i === 0 ? `${v}  (latest)` : v;
+      const bullet = i === 0 ? '●' : '○';
+      console.log(`  ${bullet} ${tag}`);
+    });
+  }
+
+  console.log(`
+Run \`npx pocketbase-mcp-pro\` to install the latest version.
+Run \`npx pocketbase-mcp-pro --version <tag>\` to install a specific version.
+`);
+}
+
 // ─── License validation ───────────────────────────────────────────────────────
 
-/** POST key to Vercel API → returns { valid, downloadUrl?, reason? } */
-async function validateLicense(key: string): Promise<LicenseResponse> {
-  return httpsPost<LicenseResponse>(LICENSE_API, { key });
+/** POST key (+ optional version) to Vercel API → returns { valid, downloadUrl?, reason? } */
+async function validateLicense(key: string, version: string | null): Promise<LicenseResponse> {
+  const body: Record<string, string> = { key };
+  if (version) body.version = version;
+  return httpsPost<LicenseResponse>(LICENSE_API, body);
 }
 
 // ─── Install logic ────────────────────────────────────────────────────────────
@@ -194,10 +275,27 @@ ${JSON.stringify(config, null, 2)}
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const args = parseArgs();
+
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (args.listVersions) {
+    await listVersions();
+    process.exit(0);
+  }
+
+  // ── Install flow ────────────────────────────────────────────────────────────
+
+  const versionLabel = args.version ? `v${args.version.replace(/^v/, '')}` : 'latest';
   console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║       🚀 PocketBase MCP Pro — Installer                ║
 ╚════════════════════════════════════════════════════════╝
+
+Installing version: ${versionLabel}
 `);
 
   // Check for existing installation
@@ -213,7 +311,7 @@ async function main(): Promise<void> {
   const key = await ask('🔑 Enter your license key: ');
   console.log('\n⏳ Validating license...');
 
-  const { valid, reason, downloadUrl } = await validateLicense(key);
+  const { valid, reason, downloadUrl } = await validateLicense(key, args.version);
   if (!valid) {
     console.error(`\n❌ Invalid license key: ${reason ?? 'Unknown error'}`);
     console.error('   Purchase at: https://pocketbase-mcp-pro.com\n');
