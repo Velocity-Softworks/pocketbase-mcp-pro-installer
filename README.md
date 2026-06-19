@@ -15,4 +15,4 @@ That's it. The installer will:
 
 ## Purchase
 
-→ [pocketbase-mcp-pro.com](https://pocketbase-mcp-pro.com)
+→ [pocketbase-mcp.com](https://pocketbase-mcp.com)
