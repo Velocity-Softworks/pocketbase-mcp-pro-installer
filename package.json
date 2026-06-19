@@ -1,6 +1,6 @@
 {
   "name": "pocketbase-mcp-pro",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Installer for PocketBase MCP Pro — one command setup for AI-powered PocketBase management",
   "type": "module",
   "bin": {
