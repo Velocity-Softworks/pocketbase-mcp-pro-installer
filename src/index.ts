@@ -17,8 +17,8 @@ const GITHUB_OWNER = 'Velocity-Softworks';
 const GITHUB_REPO  = 'pocketbase-mcp-pro';
 const INSTALL_DIR  = join(homedir(), '.pocketbase-mcp-pro');
 const LICENSE_FILE = join(INSTALL_DIR, '.license');
-const LICENSE_API  = 'https://pocketbase-mcp-pro-api.vercel.app/api/activate';
-const VERSIONS_API = 'https://pocketbase-mcp-pro-api.vercel.app/api/versions';
+const LICENSE_API  = 'https://pocketbase-mcp-pro-api.velocity-softworks.workers.dev/api/activate';
+const VERSIONS_API = 'https://pocketbase-mcp-pro-api.velocity-softworks.workers.dev/api/versions';
 
 // ─── CLI args ─────────────────────────────────────────────────────────────────
 
