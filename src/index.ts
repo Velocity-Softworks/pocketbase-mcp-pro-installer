@@ -26,15 +26,26 @@ interface Args {
   help: boolean;
   listVersions: boolean;
   version: string | null; // e.g. "v1.2.3" or null → latest
+  key: string | null;
 }
 
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
-  const args: Args = { help: false, listVersions: false, version: null };
+  const args: Args = { help: false, listVersions: false, version: null, key: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { args.help = true; }
     else if (a === '--list-versions')  { args.listVersions = true; }
+    else if (a.startsWith('--key=')) {
+      args.key = a.substring(6);
+    }
+    else if (a === '--key') {
+      const k = argv[i + 1];
+      if (k && !k.startsWith('-')) {
+        args.key = k;
+        i++;
+      }
+    }
     else if (a === '--version') {
       const v = argv[i + 1];
       if (!v || v.startsWith('-')) {
@@ -308,7 +319,10 @@ Installing version: ${versionLabel}
     }
   }
 
-  const key = await ask('🔑 Enter your license key: ');
+  let key = args.key?.trim() || '';
+  if (!key) {
+    key = await ask('🔑 Enter your license key: ');
+  }
   console.log('\n⏳ Validating license...');
 
   const { valid, reason, downloadUrl } = await validateLicense(key, args.version);
