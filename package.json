@@ -1,6 +1,6 @@
 {
   "name": "pocketbase-mcp-pro",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "Installer for PocketBase MCP Pro — one command setup for AI-powered PocketBase management",
   "type": "module",
   "bin": {
@@ -33,6 +33,9 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "add-mcp": "^1.14.0",
+    "picocolors": "^1.1.1",
     "tar": "^7.5.16"
   },
   "devDependencies": {

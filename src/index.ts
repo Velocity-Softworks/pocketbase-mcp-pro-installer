@@ -1,15 +1,28 @@
 #!/usr/bin/env node
 /**
  * PocketBase MCP Pro — Installer
- * Uses `tar` module for robust cross-platform extraction.
+ * Uses `add-mcp` for multi-agent auto-configuration & `@clack/prompts` for interactive CLI.
  */
-import { createInterface } from 'node:readline';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { existsSync, createWriteStream } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import https from 'node:https';
 import * as tar from 'tar';
+import * as p from '@clack/prompts';
+import pc from 'picocolors';
+import type { AgentType } from 'add-mcp';
+
+import { getDetectedAgents, configurePocketBaseMcp } from './agents.js';
+import {
+  renderHeader,
+  promptLicenseKey,
+  promptPocketBaseConfig,
+  promptScope,
+  promptSelectAgents,
+  renderConfigResults,
+  renderOutro,
+} from './ui.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -25,49 +38,98 @@ const VERSIONS_API = 'https://pocketbase-mcp-pro-api.velocity-softworks.workers.
 interface Args {
   help: boolean;
   listVersions: boolean;
-  version: string | null; // e.g. "v1.2.3" or null → latest
+  version: string | null;
   key: string | null;
+  nonInteractive: boolean;
+  agents: AgentType[] | null;
+  pbUrl: string | null;
+  pbEmail: string | null;
+  pbPass: string | null;
+  local: boolean;
 }
 
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
-  const args: Args = { help: false, listVersions: false, version: null, key: null };
+  const args: Args = {
+    help: false,
+    listVersions: false,
+    version: null,
+    key: null,
+    nonInteractive: false,
+    agents: null,
+    pbUrl: null,
+    pbEmail: null,
+    pbPass: null,
+    local: false,
+  };
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--help' || a === '-h') { args.help = true; }
-    else if (a === '--list-versions')  { args.listVersions = true; }
-    else if (a.startsWith('--key=')) {
+    if (a === '--help' || a === '-h') {
+      args.help = true;
+    } else if (a === '--list-versions') {
+      args.listVersions = true;
+    } else if (a === '--non-interactive') {
+      args.nonInteractive = true;
+    } else if (a.startsWith('--key=')) {
       args.key = a.substring(6);
-    }
-    else if (a === '--key') {
+    } else if (a === '--key') {
       const k = argv[i + 1];
       if (k && !k.startsWith('-')) {
         args.key = k;
         i++;
       }
-    }
-    else if (a === '--version') {
+    } else if (a.startsWith('--version=')) {
+      args.version = a.substring(10);
+    } else if (a === '--version') {
       const v = argv[i + 1];
-      if (!v || v.startsWith('-')) {
-        console.error('❌ --version requires a version tag, e.g. --version v1.2.3');
-        process.exit(1);
+      if (v && !v.startsWith('-')) {
+        args.version = v;
+        i++;
       }
-      args.version = v;
-      i++; // skip next token
+    } else if (a.startsWith('--agent=') || a.startsWith('--agents=')) {
+      const list = a.split('=')[1];
+      args.agents = list.split(',').map((s) => s.trim()) as AgentType[];
+    } else if (a === '--agent' || a === '--agents') {
+      const val = argv[i + 1];
+      if (val && !val.startsWith('-')) {
+        args.agents = val.split(',').map((s) => s.trim()) as AgentType[];
+        i++;
+      }
+    } else if (a.startsWith('--pb-url=')) {
+      args.pbUrl = a.substring(9);
+    } else if (a === '--pb-url') {
+      const u = argv[i + 1];
+      if (u && !u.startsWith('-')) {
+        args.pbUrl = u;
+        i++;
+      }
+    } else if (a.startsWith('--pb-email=')) {
+      args.pbEmail = a.substring(11);
+    } else if (a === '--pb-email') {
+      const e = argv[i + 1];
+      if (e && !e.startsWith('-')) {
+        args.pbEmail = e;
+        i++;
+      }
+    } else if (a.startsWith('--pb-pass=')) {
+      args.pbPass = a.substring(10);
+    } else if (a === '--pb-pass') {
+      const p = argv[i + 1];
+      if (p && !p.startsWith('-')) {
+        args.pbPass = p;
+        i++;
+      }
+    } else if (a === '--local' || a === '--scope=local') {
+      args.local = true;
     }
   }
+
   return args;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Network Helpers ──────────────────────────────────────────────────────────
 
-const ask = (() => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return (q: string): Promise<string> =>
-    new Promise((res) => rl.question(q, (a) => res(a.trim())));
-})();
-
-/** GET a URL, follow redirects, return body as string or Buffer */
 function httpsGet(url: string, binary: true): Promise<Buffer>;
 function httpsGet(url: string, binary?: false): Promise<string>;
 function httpsGet(url: string, binary = false): Promise<string | Buffer> {
@@ -99,7 +161,6 @@ interface LicenseResponse {
   reason?: string;
 }
 
-/** POST JSON to a URL, return parsed response body */
 function httpsPost<T = unknown>(url: string, body: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
@@ -128,7 +189,6 @@ function httpsPost<T = unknown>(url: string, body: unknown): Promise<T> {
   });
 }
 
-/** Download URL to a local file path, following redirects */
 function download(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const follow = (u: string) => {
@@ -158,13 +218,25 @@ function printHelp(): void {
 ╚════════════════════════════════════════════════════════╝
 
 Usage:
-  npx pocketbase-mcp-pro                        Install latest version
-  npx pocketbase-mcp-pro --version <tag>        Install a specific version
-  npx pocketbase-mcp-pro --list-versions        List all available versions
-  npx pocketbase-mcp-pro --help                 Show this help message
+  npx pocketbase-mcp-pro                            Interactive setup
+  npx pocketbase-mcp-pro --key=<key>                Install with license key
+  npx pocketbase-mcp-pro --version <tag>            Install a specific version
+  npx pocketbase-mcp-pro --list-versions            List all available versions
+  npx pocketbase-mcp-pro --help                     Show this help message
+
+Options:
+  --key <key>             License key for PocketBase MCP Pro
+  --version <tag>         Install specific release (e.g. v1.1.0)
+  --agent <agents>        Comma-separated agents (e.g. cursor,claude-desktop)
+  --pb-url <url>          PocketBase URL (default: http://127.0.0.1:8090)
+  --pb-email <email>      PocketBase admin email
+  --pb-pass <password>    PocketBase admin password
+  --local                 Configure in current project folder (.mcp.json)
+  --non-interactive       Run without interactive prompts
 
 Examples:
   npx pocketbase-mcp-pro
+  npx pocketbase-mcp-pro --key=PBPRO-1234 --agent=claude-desktop,cursor --non-interactive
   npx pocketbase-mcp-pro --version v1.1.0
   npx pocketbase-mcp-pro --list-versions
 
@@ -199,88 +271,34 @@ Run \`npx pocketbase-mcp-pro --version <tag>\` to install a specific version.
 `);
 }
 
-// ─── License validation ───────────────────────────────────────────────────────
-
-/** POST key (+ optional version) to Vercel API → returns { valid, downloadUrl?, reason? } */
 async function validateLicense(key: string, version: string | null): Promise<LicenseResponse> {
   const body: Record<string, string> = { key };
   if (version) body.version = version;
   return httpsPost<LicenseResponse>(LICENSE_API, body);
 }
 
-// ─── Install logic ────────────────────────────────────────────────────────────
-
-async function install(licenseKey: string, downloadUrl: string): Promise<string> {
+async function installPackage(downloadUrl: string, spinner: ReturnType<typeof p.spinner>): Promise<string> {
   await mkdir(INSTALL_DIR, { recursive: true });
 
   const tarball = join(INSTALL_DIR, 'package.tgz');
-  console.log('\n📦 Downloading PocketBase MCP Pro...');
+  spinner.start('Downloading PocketBase MCP Pro package...');
   await download(downloadUrl, tarball);
-  console.log('   Download complete.');
+  spinner.stop('Download complete.');
 
-  // Extract: npm pack tarballs always unpack to ./package/
   const packageDir = join(INSTALL_DIR, 'package');
   if (existsSync(packageDir)) await rm(packageDir, { recursive: true });
 
-  console.log('\n📂 Extracting...');
+  spinner.start('Extracting package contents...');
   try {
     await tar.x({ file: tarball, cwd: INSTALL_DIR });
   } catch (err) {
+    spinner.stop('Extraction failed.');
     throw new Error(`Extraction failed: ${(err as Error).message}`);
   }
+  spinner.stop('Package extracted successfully.');
 
-  // Clean up tarball
   await rm(tarball, { force: true });
-
-  // Save license
-  await writeFile(LICENSE_FILE, licenseKey, 'utf8');
-
   return packageDir;
-}
-
-function printConfig(packageDir: string): void {
-  const entrypoint = resolve(packageDir, 'build', 'index.js');
-
-  const config = {
-    mcpServers: {
-      'pocketbase-mcp-pro': {
-        command: 'node',
-        args: [entrypoint],
-        env: {
-          POCKETBASE_URL: 'http://127.0.0.1:8090',
-          // POCKETBASE_ADMIN_EMAIL: 'admin@example.com',
-          // POCKETBASE_ADMIN_PASSWORD: 'your-password',
-        },
-      },
-    },
-  };
-
-  const isWin     = platform() === 'win32';
-  const claudeCfg = isWin
-    ? '%APPDATA%\\Claude\\claude_desktop_config.json'
-    : '~/Library/Application Support/Claude/claude_desktop_config.json';
-  const cursorCfg = isWin
-    ? '%APPDATA%\\Cursor\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json'
-    : '~/.config/cursor/mcp.json';
-
-  console.log(`
-╔════════════════════════════════════════════════════════╗
-║         ✅ PocketBase MCP Pro installed!               ║
-╚════════════════════════════════════════════════════════╝
-
-📁 Installed to: ${packageDir}
-
-────────────────────────────────────────────────────────
-Add this to your MCP client config:
-
-Claude Desktop: ${claudeCfg}
-Cursor:         ${cursorCfg}
-
-${JSON.stringify(config, null, 2)}
-────────────────────────────────────────────────────────
-
-📚 Docs: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}#readme
-`);
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -298,43 +316,82 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Install flow ────────────────────────────────────────────────────────────
-
   const versionLabel = args.version ? `v${args.version.replace(/^v/, '')}` : 'latest';
-  console.log(`
-╔════════════════════════════════════════════════════════╗
-║       🚀 PocketBase MCP Pro — Installer                ║
-╚════════════════════════════════════════════════════════╝
 
-Installing version: ${versionLabel}
-`);
+  let existingKey = args.key?.trim() || '';
+  if (!existingKey && existsSync(LICENSE_FILE)) {
+    existingKey = (await readFile(LICENSE_FILE, 'utf8').catch(() => '')).trim();
+  }
 
-  // Check for existing installation
-  if (existsSync(LICENSE_FILE)) {
-    await readFile(LICENSE_FILE, 'utf8').catch(() => '');
-    const answer = await ask('⚠️  An existing installation was found. Re-install? (y/N): ');
-    if (answer.toLowerCase() !== 'y') {
-      console.log('\nAborted. Your existing installation is unchanged.\n');
-      process.exit(0);
+  let licenseKey = existingKey;
+  let pbUrl = args.pbUrl || 'http://127.0.0.1:8090';
+  let pbEmail = args.pbEmail || undefined;
+  let pbPass = args.pbPass || undefined;
+  let selectedAgents: AgentType[] = args.agents || [];
+  let isLocal = args.local;
+
+  if (args.nonInteractive) {
+    if (!licenseKey) {
+      console.error('❌ License key required in --non-interactive mode (use --key=<key>)');
+      process.exit(1);
     }
+    if (!selectedAgents.length) {
+      selectedAgents = ['claude-desktop', 'cursor'];
+    }
+  } else {
+    renderHeader(versionLabel);
+
+    licenseKey = await promptLicenseKey(existingKey);
+
+    const pbConfig = await promptPocketBaseConfig();
+    pbUrl = pbConfig.url;
+    pbEmail = pbConfig.email;
+    pbPass = pbConfig.password;
+
+    isLocal = await promptScope();
+
+    const { detected, all } = await getDetectedAgents();
+    selectedAgents = await promptSelectAgents(detected, all);
   }
 
-  let key = args.key?.trim() || '';
-  if (!key) {
-    key = await ask('🔑 Enter your license key: ');
-  }
-  console.log('\n⏳ Validating license...');
+  const s = p.spinner();
+  s.start('Validating license key...');
 
-  const { valid, reason, downloadUrl } = await validateLicense(key, args.version);
+  const { valid, reason, downloadUrl } = await validateLicense(licenseKey, args.version);
   if (!valid) {
+    s.stop(pc.red('License validation failed.'));
     console.error(`\n❌ Invalid license key: ${reason ?? 'Unknown error'}`);
     console.error('   Purchase at: https://pocketbase-mcp-pro.com\n');
     process.exit(1);
   }
-  console.log('   ✅ License accepted.');
+  s.stop(pc.green('License validated successfully.'));
 
-  const packageDir = await install(key, downloadUrl!);
-  printConfig(packageDir);
+  await writeFile(LICENSE_FILE, licenseKey, 'utf8');
+
+  const packageDir = await installPackage(downloadUrl!, s);
+
+  s.start('Configuring AI agents...');
+  const entrypoint = resolve(packageDir, 'build', 'index.js');
+
+  const envVars: Record<string, string> = {
+    POCKETBASE_URL: pbUrl,
+    POCKETBASE_ADMIN_EMAIL: pbEmail || 'admin@example.com',
+    POCKETBASE_ADMIN_PASSWORD: pbPass || 'your-password',
+  };
+
+  const results = configurePocketBaseMcp(selectedAgents, entrypoint, envVars, { local: isLocal });
+  s.stop('Agent configuration complete.');
+
+  if (args.nonInteractive) {
+    console.log('\n✅ Installation and configuration finished successfully!');
+    console.log(`📁 Installed to: ${packageDir}`);
+    results.forEach((r) => {
+      console.log(`  - ${r.displayName}: ${r.success ? 'OK -> ' + r.path : 'Error: ' + r.error}`);
+    });
+  } else {
+    renderConfigResults(results);
+    renderOutro(packageDir);
+  }
 
   process.exit(0);
 }
